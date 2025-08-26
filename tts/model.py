@@ -61,9 +61,26 @@ def generate_image_with_latent(prompt: str, output_path: str,
 if __name__ == "__main__":
     
     # Generate 10 samples with the same prompt
+    # saved_files = generate_image_with_latent(
+    #     prompt="a watercolor fox in a misty forest",
+    #     output_path="./output/fox_samples.png",
+    #     num_samples=20,
+    #     seed=42,  # Fixed seed for reproducible variations
+    #     num_inference_steps=50,
+    #     guidance_scale=7.5
+    # )
+    
+    # saved_files = generate_image_with_latent(
+    #     prompt="Three origami cranes in white, gold, and blue are perched on a black lacquered shelf above a blooming bonsai tree.",
+    #     output_path="./output/tree_samples.png",
+    #     num_samples=20,
+    #     seed=42,  # Fixed seed for reproducible variations
+    #     num_inference_steps=50,
+    #     guidance_scale=7.5
+    # )
     saved_files = generate_image_with_latent(
-        prompt="a watercolor fox in a misty forest",
-        output_path="./output/fox_samples.png",
+        prompt="Two pink flamingos standing on a wooden dock, with three turquoise kayaks floating on the calm lake behind them.",
+        output_path="./output/flamingos_samples.png",
         num_samples=10,
         seed=42,  # Fixed seed for reproducible variations
         num_inference_steps=50,
