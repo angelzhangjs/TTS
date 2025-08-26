@@ -14,12 +14,10 @@ from pathlib import Path
 import torch
 from omegaconf import OmegaConf
 
-
 def add_repo_to_path(repo_root: Path) -> None:
     repo_str = str(repo_root)
     if repo_str not in sys.path:
         sys.path.insert(0, repo_str)
-
 
 def load_latent_diffusion(config_path: Path, checkpoint_path: Path, device: str | None = None):
     add_repo_to_path(Path("/Users/angel/tts_LDM/latent-diffusion"))
@@ -36,7 +34,6 @@ def load_latent_diffusion(config_path: Path, checkpoint_path: Path, device: str 
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     return model.to(device)
-
 
 def get_default_paths():
     repo_root = Path("/Users/angel/tts_LDM/latent-diffusion")

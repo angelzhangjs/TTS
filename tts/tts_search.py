@@ -4,7 +4,15 @@ Implement the diffusion latent search framework here, to search the latent space
  -use Best-of-N search 
 """
 
+def beam_search(model, prompt: str, outdir: str, height: int, width: int):
+    pass
 
+
+def best_of_n_search(model, prompt: str, outdir: str, height: int, width: int):
+    pass
+
+
+    
 
 
 
