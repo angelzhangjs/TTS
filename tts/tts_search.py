@@ -5,19 +5,18 @@ Implement the diffusion latent search framework here, to search the latent space
 """
 import torch
 import numpy as np
-from typing import List, Tuple, Optional
-import os 
-from PIL import Image
+from typing import List
+from PIL import Image 
 
 def beam_search_latents(pipe, 
                         prompt: str, 
-                        num_beams: int = 4, 
+                        num_beams: int = 1, 
                         num_steps: int = 50, 
                        height: int = 512, 
                        width: int = 512, 
                        guidance_scale: float = 7.5,
                        search_steps: List[int] = [10, 20, 30, 40]):
-    """
+    """ 
     Beam search in latent space during diffusion process.
     At specified steps, generate multiple candidates and keep the best ones. 
     """ 
@@ -25,7 +24,7 @@ def beam_search_latents(pipe,
     
     # Encode prompt
     text_inputs = pipe.tokenizer(prompt, padding="max_length", max_length=pipe.tokenizer.model_max_length, 
-                                truncation=True, return_tensors="pt")
+                                truncation=True, return_tensors="pt") 
     text_embeddings = pipe.text_encoder(text_inputs.input_ids.to(device))[0]
     text_embeddings = text_embeddings.to(device=pipe.device, dtype=pipe.unet.dtype)
     
@@ -41,7 +40,7 @@ def beam_search_latents(pipe,
     # Initialize latents
     latents_shape = (1, pipe.unet.config.in_channels, height // 8, width // 8) 
     latents = torch.randn(latents_shape, device=device, dtype=pipe.unet.dtype)
-    latents = latents * pipe.scheduler.init_noise_sigma 
+    latents = latents * pipe.scheduler.init_noise_sigma  
     
     # Beam search candidates: [(latent, score)]
     beam_candidates = [(latents.clone(), 0.0)] 
@@ -99,7 +98,6 @@ def beam_search_latents(pipe,
     
     return Image.fromarray(image), beam_candidates
 
-
 def best_of_n_search(pipe, 
                     prompt: str, 
                     n_candidates: int = 8, 
@@ -117,34 +115,54 @@ def best_of_n_search(pipe,
     text_inputs = pipe.tokenizer(prompt, padding="max_length", max_length=pipe.tokenizer.model_max_length, 
                                 truncation=True, return_tensors="pt")
     text_embeddings = pipe.text_encoder(text_inputs.input_ids.to(device))[0]
+    text_embeddings = text_embeddings.to(device=pipe.device, dtype=pipe.unet.dtype)
     
     # Unconditional embeddings
     uncond_input = pipe.tokenizer([""], padding="max_length", max_length=pipe.tokenizer.model_max_length, 
                                  return_tensors="pt")
-    uncond_embeddings = pipe.text_encoder(uncond_input.input_ids.to(device))[0] 
+    uncond_embeddings = pipe.text_encoder(uncond_input.input_ids.to(device))[0]
+    uncond_embeddings = uncond_embeddings.to(device=pipe.device, dtype=pipe.unet.dtype)
+    
+    # Combine embeddings 
     text_embeddings = torch.cat([uncond_embeddings, text_embeddings])
     
     # Generate N initial latents
     latents_shape = (n_candidates, pipe.unet.config.in_channels, height // 8, width // 8)
-    latents = torch.randn(latents_shape, device=device, dtype=text_embeddings.dtype)
+    latents = torch.randn(latents_shape, device=device, dtype=pipe.unet.dtype)
     latents = latents * pipe.scheduler.init_noise_sigma
-    
     pipe.scheduler.set_timesteps(num_steps) 
     
     # First phase: denoise all candidates to selection point
     for i, t in enumerate(pipe.scheduler.timesteps[:selection_step]):
-        # Batch process all candidates
-        latent_model_input = torch.cat([latents, latents])  # For CFG
-        text_emb_batch = text_embeddings.repeat(n_candidates, 1, 1)
+        # Process each candidate individually to avoid tensor shape issues
+        processed_latents = []
         
-        t_unet = torch.tensor([t], device=device, dtype=torch.long).repeat(latent_model_input.shape[0])
-        noise_pred = pipe.unet(latent_model_input, t_unet, encoder_hidden_states=text_emb_batch).sample
+        for candidate_idx in range(n_candidates):
+            # Extract single candidate
+            single_latent = latents[candidate_idx:candidate_idx+1]  # Keep batch dim
+            
+            # Prepare for CFG (duplicate for unconditional + conditional)
+            latent_model_input = torch.cat([single_latent, single_latent])  # Shape: [2, 4, H, W]
+            
+            # Prepare text embeddings for this single candidate
+            text_emb_single = text_embeddings  # Already has batch size 2 [uncond, cond]
+            
+            # Prepare timestep tensor
+            t_unet = torch.tensor([t], device=device, dtype=torch.long).repeat(2)
+            
+            # UNet forward pass
+            noise_pred = pipe.unet(latent_model_input, t_unet, encoder_hidden_states=text_emb_single).sample
+            
+            # Apply CFG
+            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+            noise_pred_cfg = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
+            
+            # Scheduler step
+            processed_latent = pipe.scheduler.step(noise_pred_cfg, t, single_latent).prev_sample
+            processed_latents.append(processed_latent)
         
-        # Split and apply CFG
-        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-        noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-        
-        latents = pipe.scheduler.step(noise_pred, t, latents).prev_sample
+        # Combine all processed candidates back into batch
+        latents = torch.cat(processed_latents, dim=0)
     
     # Selection: choose best candidate based on some criteria
     with torch.no_grad(): 
@@ -162,7 +180,7 @@ def best_of_n_search(pipe,
     for i, t in enumerate(pipe.scheduler.timesteps[selection_step:]):
         latent_model_input = torch.cat([best_latent] * 2)
         t_unet = torch.tensor([t], device=device, dtype=torch.long).repeat(latent_model_input.shape[0])
-        noise_pred = pipe.unet(latent_model_input, t_unet, encoder_hidden_states=text_embeddings[:2]).sample
+        noise_pred = pipe.unet(latent_model_input, t_unet, encoder_hidden_states=text_embeddings).sample
         
         noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
         noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
@@ -173,8 +191,10 @@ def best_of_n_search(pipe,
     with torch.no_grad():
         image = pipe.vae.decode(best_latent / pipe.vae.config.scaling_factor).sample
         image = (image / 2 + 0.5).clamp(0, 1)
-        image = image.cpu().permute(0, 2, 3, 1).numpy()[0]
+        image = image.cpu().permute(0, 2, 3, 1).numpy()[0] 
         image = (image * 255).astype(np.uint8)
     
     return Image.fromarray(image), scores[best_idx]
 
+def latent_search_GRPO(pipe): 
+    pass  
